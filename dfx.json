@@ -1,0 +1,13 @@
+{
+  "canisters": {
+    "auth_canister": {
+      "main": "src/index.ts",
+      "type": "custom",
+      "build": "npx azle auth_canister",
+      "root": "src",
+      "ts": "src/index.ts",
+      "candid": "src/index.did",
+      "wasm": ".azle/auth_canister/auth_canister.wasm.gz"
+    }
+  }
+}
