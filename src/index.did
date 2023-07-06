@@ -1,21 +1,18 @@
 type User = record {
-  id : text;
   username : text;
-  password : text;
   createdAt : nat64;
+  secret : text;
   email : text;
-  resetToken : opt text;
 };
-type UserPayload = record { username : text; password : text; email : text };
+type UserPayload = record { username : text; secret : text; email : text };
 type _AzleResult = variant { Ok : User; Err : text };
 type _AzleResult_1 = variant { Ok : vec User; Err : text };
 type _AzleResult_2 = variant { Ok : text; Err : text };
-service : () -> {
+service : (text) -> {
   deleteUser : (text) -> (_AzleResult);
   getUser : (text) -> (_AzleResult) query;
   getUsers : () -> (_AzleResult_1) query;
-  loginUser : (text, text) -> (_AzleResult) query;
+  loginUser : () -> (_AzleResult) query;
+  reclaimAccount : (text, text) -> (_AzleResult_2);
   registerUser : (UserPayload) -> (_AzleResult);
-  requestPasswordReset : (text) -> (_AzleResult_2);
-  resetPassword : (text, text) -> (_AzleResult);
 }
