@@ -1,115 +1,125 @@
-import { $query, $update, Record, StableBTreeMap, Vec, match, Result, nat64, ic, Opt } from 'azle';
-import { v4 as uuidv4 } from 'uuid';
-
+import {
+  $query,
+  $update,
+  Record,
+  StableBTreeMap,
+  Vec,
+  match,
+  Result,
+  nat64,
+  ic,
+  Opt,
+  Principal,
+} from "azle";
 
 type User = Record<{
-  id: string;
+  id: Principal;
   username: string;
-  email: string;
-  password: string;
   createdAt: nat64;
-  resetToken: Opt<string>;
-}>
+  loggedIn: boolean;
+  loggedInDuration: Opt<nat64>;
+}>;
 
 type UserPayload = Record<{
   username: string;
-  email: string;
-  password: string;
-}>
+}>;
 
-const userStorage = new StableBTreeMap<string, User>(0, 44, 1024);
+const userStorage = new StableBTreeMap<Principal, User>(0, 63, 1024);
 
+// loggedInTime set to 30 seconds
+const loggedInTimer: nat64 = BigInt(1000000000 * 30);
+
+/**
+ * returns All registered Users
+ */
 $query;
 export function getUsers(): Result<Vec<User>, string> {
   return Result.Ok(userStorage.values());
 }
-
+/**
+ * returns A registered User or an error message
+ */
 $query;
-export function getUser(id: string): Result<User, string> {
+export function getUser(id: Principal): Result<User, string> {
   return match(userStorage.get(id), {
     Some: (user) => Result.Ok<User, string>(user),
-    None: () => Result.Err<User, string>(`User with id=${id} not found`)
+    None: () => Result.Err<User, string>(`User with id=${id} not found`),
   });
 }
 
+/**
+ * Registers the caller as a user of the platform
+ * Returns an error message if the caller is already registered
+ */
 $update;
 export function registerUser(payload: UserPayload): Result<User, string> {
+  // returns an error message if caller is already registered
+  if (getUser(ic.caller()).Ok) {
+    return Result.Err<User, string>("You are already registered");
+  }
   const user: User = {
-    id: uuidv4(),
+    id: ic.caller(),
     createdAt: ic.time(),
-    resetToken: Opt.None,
-    ...payload
+    loggedIn: false,
+    loggedInDuration: Opt.None,
+    ...payload,
   };
-  userStorage.insert(user.id, user);
+  userStorage.insert(ic.caller(), user);
   return Result.Ok(user);
 }
 
-$query;
-export function loginUser(username: string, password: string): Result<User, string> {
-  const user = userStorage.values().find((u) => u.username === username && u.password === password);
-  if (user) {
-    return Result.Ok(user);
+/**
+ * Allows a registered user to login
+ * 
+ */
+$update;
+export function loginUser(): Result<User, string> {
+  const user = getUser(ic.caller());
+  // login only if the caller is registered
+  if (user.Ok) {
+    const updatedUser: User = {
+      ...user.Ok,
+      loggedIn: true,
+      loggedInDuration: Opt.Some(ic.time() + loggedInTimer),
+    };
+    userStorage.insert(ic.caller(), updatedUser);
+    return Result.Ok<User, string>(updatedUser);
   }
-  return Result.Err<User, string>('Invalid username or password');
+  // return an error message if caller isn't registered
+  return Result.Err<User, string>("Caller isn't registered");
 }
 
+/**
+ * Allows a registered user to delete their profile
+ */
 $update;
-export function deleteUser(id: string): Result<User, string> {
-  return match(userStorage.remove(id), {
+export function deleteUser(): Result<User, string> {
+  return match(userStorage.remove(ic.caller()), {
     Some: (deletedUser) => Result.Ok<User, string>(deletedUser),
-    None: () => Result.Err<User, string>(`User with id=${id} not found`)
+    None: () =>
+      Result.Err<User, string>(`User with id=${ic.caller()} not found`),
   });
 }
 
+/**
+ * Allows a logged in user to logout
+ */
 $update;
-export function requestPasswordReset(email: string): Result<string, string> {
-  const user = userStorage.values().find((u) => u.email === email);
-  if (user) {
-    const resetToken = generateResetToken();
-    userStorage.insert(user.id, { ...user, resetToken: Opt.Some(resetToken) });
-    return Result.Ok(resetToken);
-  }
-  return Result.Err<string, string>('User with the specified email not found');
-}
-
-$update;
-export function resetPassword(resetToken: string, newPassword: string): Result<User, string> {
-  const user = userStorage.values().find((u) => match(u.resetToken, {
-    Some: (value:string) => value === resetToken,
-    None: () => false
-  }));
-
-
-  if (user) {
-    const updatedUser = { ...user, password: newPassword, resetToken: Opt.None };
-    userStorage.insert(user.id, updatedUser);
-    return Result.Ok(updatedUser);
-  }
-  return Result.Err<User, string>('Invalid or expired reset token');
-}
-
-// Helper function to generate a random reset token
-function generateResetToken(): string {
-  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let result = '';
-
-  for (let i = 0; i < 5; i++) {
-    const randomIndex = Math.floor(Math.random() * characters.length);
-    result += characters.charAt(randomIndex);
-  }
-
-  return result;
-}
-
-// a workaround to make uuid package work with Azle
-globalThis.crypto = {
-    getRandomValues: () => {
-        let array = new Uint8Array(32)
-
-        for (let i = 0; i < array.length; i++) {
-            array[i] = Math.floor(Math.random() * 256)
-        }
-
-        return array
+export function logoutUser(): Result<User, string> {
+  const user = getUser(ic.caller());
+  // logout only if the caller is registered
+  if (user.Ok) {
+    if(!user.Ok.loggedIn){
+      return Result.Err<User, string>(`Caller isn't logged in`);
     }
+    const updatedUser: User = {
+      ...user.Ok,
+      loggedIn: false,
+      loggedInDuration: Opt.None,
+    };
+    userStorage.insert(ic.caller(), updatedUser);
+    return Result.Ok<User, string>(updatedUser);
+  }
+  // return an error message if caller isn't registered
+  return Result.Err<User, string>("Caller isn't registered");
 }
